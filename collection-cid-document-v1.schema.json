@@ -1,0 +1,99 @@
+{
+  "$id": "https://raw.githubusercontent.com/QuantuLabs/8004-collection-extension/main/collection-cid-document-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "8004 Collection CID Document v1",
+  "description": "JSON document referenced by the collection CID pointer (`col`). UIs MUST only render fields defined in this schema; additional properties MUST NOT be rendered without sanitization.",
+  "type": "object",
+  "additionalProperties": true,
+  "maxProperties": 20,
+  "required": ["version", "name"],
+  "properties": {
+    "version": {
+      "const": "1.0.0",
+      "description": "Schema profile version for this collection document."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "symbol": {
+      "type": "string",
+      "maxLength": 16
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "image": {
+      "$ref": "#/$defs/uriLike"
+    },
+    "banner_image": {
+      "$ref": "#/$defs/uriLike"
+    },
+    "socials": {
+      "$ref": "#/$defs/socials"
+    }
+  },
+  "$defs": {
+    "uriLike": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    },
+    "socialValue": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "socials": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/socialValue" },
+      "maxProperties": 20,
+      "properties": {
+        "website": {
+          "$ref": "#/$defs/uriLike"
+        },
+        "x": {
+          "$ref": "#/$defs/socialValue"
+        },
+        "twitter": {
+          "$ref": "#/$defs/socialValue"
+        },
+        "discord": {
+          "$ref": "#/$defs/socialValue"
+        },
+        "telegram": {
+          "$ref": "#/$defs/socialValue"
+        },
+        "github": {
+          "$ref": "#/$defs/socialValue"
+        },
+        "farcaster": {
+          "$ref": "#/$defs/socialValue"
+        },
+        "instagram": {
+          "$ref": "#/$defs/socialValue"
+        },
+        "youtube": {
+          "$ref": "#/$defs/socialValue"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "version": "1.0.0",
+      "name": "Caster Agents",
+      "symbol": "CAST",
+      "description": "Collection for Caster-compatible agents",
+      "image": "ipfs://bafybeigdyrzt5example",
+      "banner_image": "ipfs://bafybeibannerexample",
+      "socials": {
+        "website": "https://caster.example",
+        "x": "@caster",
+        "discord": "https://discord.gg/caster"
+      }
+    }
+  ]
+}

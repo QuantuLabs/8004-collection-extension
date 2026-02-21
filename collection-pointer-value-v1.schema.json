@@ -1,0 +1,10 @@
+{
+  "$id": "https://raw.githubusercontent.com/QuantuLabs/8004-collection-extension/main/collection-pointer-value-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "8004 Collection Pointer Value v1",
+  "description": "Raw metadata value for key 'col'. Value MUST be lowercase before validation (implementations SHOULD lowercase the input before applying this schema).",
+  "type": "string",
+  "minLength": 50,
+  "maxLength": 256,
+  "pattern": "^c1:b[a-z2-7]+$"
+}
