@@ -61,8 +61,8 @@ Input rule:
 
 - SDK/indexer SHOULD accept CIDv0 or CIDv1 input.
 - SDK/indexer SHOULD normalize to CIDv1 base32 lowercase before storage/comparison.
-- Implementations MUST convert the value to lowercase before applying regex or prefix validation, to avoid rejecting valid uppercase Base32 CIDv1 inputs.
-- The pointer value (including `c1:` prefix) SHOULD be between 50 and 256 characters after normalization.
+- Implementations MUST normalize CID input to CIDv1 base32 lowercase after parsing, not by lowercasing the raw input (CIDv0 is base58 and case-sensitive; lowercasing before CID parsing would destroy CIDv0 input).
+- The pointer value (including `c1:` prefix) SHOULD be between 62 and 256 characters after normalization. A valid CIDv1 base32 with sha2-256 is at least 59 characters; with the `c1:` prefix the minimum is 62.
 
 ### 2.2 CID Target Document JSON Schema
 
@@ -96,7 +96,7 @@ Recommended minimum JSON shape:
 
 The collection document is intentionally minimal to avoid duplicating agent-level information already present in `agentURI` data. `version` identifies the document schema profile, `symbol` is optional display metadata, and `socials` is the recommended container for social/account links.
 
-The schema allows additional properties for forward compatibility. UIs MUST only render fields defined in the schema; additional properties MUST NOT be rendered without sanitization to prevent stored XSS via IPFS-hosted documents.
+The schema allows additional properties for forward compatibility. UIs MUST sanitize ALL fields from CID documents before rendering, including defined schema fields (`name`, `symbol`, `description`, `socials` values). Raw HTML rendering of any field is prohibited. URI-like fields (`image`, `banner_image`, `socials.website`) MUST be validated for safe schemes (`ipfs://`, `https://`, `ar://` only); `javascript:`, `data:`, `vbscript:`, and `blob:` schemes MUST be rejected. Additional properties MUST NOT be rendered without sanitization to prevent stored XSS via IPFS-hosted documents.
 
 Schema URIs point to the canonical repository at `QuantuLabs/8004-collection-extension`.
 
@@ -149,6 +149,8 @@ Recommended creator identifier format is **CAIP-10** account IDs.
 Format:
 
 `<caip2_chain_id>:<account_address>`
+
+EVM address canonicalization: to ensure deterministic `collection_key` derivation across indexers, EVM account addresses in `creator_snapshot_caip10` and `asset` MUST be stored as EIP-55 mixed-case checksum encoding. Indexers MUST apply EIP-55 checksumming to all EVM addresses before storage and comparison.
 
 Examples:
 
@@ -233,6 +235,10 @@ EVM canonical source and order:
 2. Canonical sort key MUST be `(block_number, transaction_index, log_index)`.
 3. `log_index` MUST be the block-scoped log index from RPC logs.
 
+The flat `log_index` is preferred over instruction-based tracking (`instruction_index`, `inner_instruction_index`) because a single CPI instruction can emit multiple events, and reconstructing the CPI call stack from log strings is fragile. The flat array index from finalized `getBlock` data is immutable and deterministic.
+
+Solana runtime log truncation: the Solana runtime enforces a per-transaction log byte limit. If a transaction exceeds this limit, the runtime silently truncates `meta.logMessages` and appends a `Log truncated` entry. Events emitted after truncation will not appear in the log array. Indexers relying on log-based event parsing SHOULD detect the `Log truncated` sentinel and flag affected transactions for manual review or fallback to account state diff analysis.
+
 First-write-wins MUST be evaluated using the canonical sort key on canonical chain history.
 
 ### 5.3 Reorg and Rollback Policy
@@ -256,15 +262,16 @@ On metadata set where `key == "col"`:
 1. Match key using exact, case-sensitive equality: `key == "col"`.
 2. Decode value as UTF-8.
 3. Trim leading/trailing ASCII whitespace (bytes `0x09`, `0x0A`, `0x0D`, `0x20`) from the decoded value. Non-ASCII whitespace (e.g., NBSP `0xC2A0`, zero-width space) is not trimmed and will cause CID parsing to fail.
-4. Convert the trimmed value to lowercase.
-5. Validate prefix `c1:`.
-6. Parse and normalize CID -> `cid_norm` (if parsing fails, treat as malformed input).
-7. Load `creator_snapshot_caip10` for asset.
-8. Compute `collection_key`.
-9. If no existing locked membership for `(chain_id_caip2, asset)`, create it and lock `col`.
-10. If an existing locked membership has the same `cid_norm`, treat as idempotent (no membership change).
-11. If an existing locked membership has a different `cid_norm`, reject mutation and keep the original locked membership.
-12. Append history event.
+4. Validate prefix `c1:` (case-insensitive: accept `c1:`, `C1:`, etc.).
+5. Extract the CID portion (everything after `c1:`).
+6. Parse CID (accepts CIDv0 base58 or CIDv1 in any base/case). If parsing fails, treat as malformed input.
+7. Normalize to CIDv1 base32 lowercase -> `cid_norm`. This step handles CIDv0-to-v1 conversion and uppercase-to-lowercase normalization without destroying case-sensitive encodings (base58).
+8. Load `creator_snapshot_caip10` for asset.
+9. Compute `collection_key`.
+10. If no existing locked membership for `(chain_id_caip2, asset)`, create it and lock `col`.
+11. If an existing locked membership has the same `cid_norm`, treat as idempotent (no membership change).
+12. If an existing locked membership has a different `cid_norm`, reject mutation and keep the original locked membership.
+13. Append history event.
 
 Operator/delegate risk: if the underlying 8004 registry allows operators or delegates (e.g., ERC-721 `setApprovalForAll`, Metaplex delegates) to call `setMetadata`, a temporary operator (marketplace, staking contract) could set `col` on behalf of the owner. Because of first-write-wins, this permanently locks the agent's collection membership. Implementations aware of this risk SHOULD restrict `col` writes to owner-only at the registry level. If this is not possible, SDK/UI MUST warn owners that approving operators grants irrevocable `col` write authority.
 
@@ -384,6 +391,7 @@ Risks:
 6. Because `collection_key` includes `cid_norm`, changing collection JSON CID creates a new namespace for newly registered agents (collection identity fragmentation).
 7. Operator/delegate griefing: a temporary operator can irrevocably lock agents into a garbage collection via first-write-wins (see section 5.4).
 8. CID document availability: if unpinned from all IPFS nodes, display metadata is lost (collection identity is preserved but UI degrades).
+9. Mempool front-running: on EVM chains, pending `col` transactions are visible in the public mempool, enabling attackers with operator/delegate permissions to front-run with a malicious collection pointer. On Solana, analogous attacks are possible via MEV/priority fees.
 
 Mitigations:
 
@@ -395,6 +403,7 @@ Mitigations:
 6. SDK/UI SHOULD require explicit confirmation before first `col` write, since this action is irreversible in v1.
 7. SDK/UI SHOULD warn owners that approving operators grants irrevocable `col` write authority.
 8. Indexers SHOULD cache CID documents locally as availability fallback (see section 5.6).
+9. SDKs SHOULD use private transaction submission (e.g., Flashbots Protect, MEV-resistant RPCs) for `col` set operations when available. On Solana, SDKs SHOULD use priority fees for `col` set transactions.
 
 ### 6.1 V2 Migration Path (Informational)
 
@@ -425,13 +434,15 @@ These paths are sketched here to preserve design space; none are normative in V1
 13. `block_timestamp` fields should come from chain block headers.
 14. CID document resolution should be non-blocking and bounded.
 15. Burn/deactivation signals should set `active=false` without mutating locked identity fields.
-16. Value should be converted to lowercase before prefix/regex validation (section 5.4 step 4).
+16. CID normalization should happen after CID parsing, not by lowercasing the raw input. CIDv0 (base58) is case-sensitive and must be parsed before any case conversion (section 5.4 steps 5-7).
 17. ASCII whitespace trimming should cover bytes `0x09`, `0x0A`, `0x0D`, `0x20` only. Non-ASCII whitespace should not be trimmed.
-18. Pointer value length after normalization should be between 50 and 256 characters.
-19. UIs should only render CID document fields defined in the schema; additional properties should not be rendered without sanitization.
+18. Pointer value length after normalization should be between 62 and 256 characters.
+19. UIs should sanitize ALL fields from CID documents before rendering, including defined schema fields. URI-like fields should only allow `ipfs://`, `https://`, and `ar://` schemes.
 20. UIs should display `creator_snapshot_caip10` prominently to distinguish collections with the same CID but different creators.
 21. EVM `agent_local_id` should be `uint256` decimal string; Solana `agent_local_id` should be Base58 asset account address.
 22. Solana `log_index` should be the zero-based ordinal position in the full `meta.logMessages` array, counting all entries.
+23. EVM account addresses in CAIP-10 identifiers should use EIP-55 mixed-case checksum encoding for deterministic cross-indexer comparison.
+24. Solana indexers should detect `Log truncated` sentinel in `meta.logMessages` and flag affected transactions.
 
 ---
 
@@ -495,20 +506,50 @@ These paths are sketched here to preserve design space; none are normative in V1
     - Event B at `(S, tx_index=5, log_index=18)` sets `col=b`.
     - Expected locked value: `col=a` (lower `log_index` wins).
 
+12. Idempotent re-set (same CID):
+    - Agent has locked `col=c1:bafyA...`.
+    - Agent sets `col=c1:bafyA...` again (same CID).
+    - Expected: no state change. History event `SET_NOOP`.
+
+13. Delete attempt on locked membership:
+    - Agent has locked `col=c1:bafyA...`.
+    - A `MetadataDeleted` event with `key == "col"` is ingested.
+    - Expected: rejected. History event `DELETE_REJECTED_LOCKED`. Locked value unchanged.
+
+14. Malformed value handling:
+    - Agent sets `col=c2:bafybeig...` (wrong prefix).
+    - Expected: treated as malformed. `invalid_reason` stored. No locked membership created. Agent can still set a valid `col` later.
+
+15. Two agents same CID, different creator:
+    - Agent A (creator `0xAlice`) and Agent B (creator `0xBob`) both set `col=c1:bafySame...`.
+    - Expected: different `collection_key` values. Two distinct collections despite same CID.
+
+16. ASCII whitespace trimming:
+    - Agent sets `col="\t  c1:bafybeigdyrzt5...\n"` (tabs, spaces, newline).
+    - Expected: trimmed to `c1:bafybeigdyrzt5...`, accepted and locked.
+
+17. Non-ASCII whitespace rejection:
+    - Agent sets `col="\u00A0c1:bafybeigdyrzt5..."` (NBSP prefix).
+    - Expected: treated as malformed. NBSP is not trimmed, CID parsing fails.
+
 ---
 
 ## 9. Reference Pseudocode
 
 ```ts
+function trimAsciiWhitespace(s: string): string {
+  return s.replace(/^[\x09\x0a\x0d\x20]+|[\x09\x0a\x0d\x20]+$/g, "");
+}
+
 function normalizeCollectionCid(input: string): string | null {
   try {
-    const raw = input.trim();
+    const raw = trimAsciiWhitespace(input);
     const noScheme = raw
       .replace(/^ipfs:\/\//i, "")
       .replace(/^\/ipfs\//i, "");
 
-    const cid = CID.parse(noScheme); // accepts v0 or v1
-    return cid.toV1().toString().toLowerCase();
+    const cid = CID.parse(noScheme); // accepts v0 or v1, any case
+    return cid.toV1().toString(); // CIDv1 base32lower is already lowercase
   } catch {
     return null;
   }
