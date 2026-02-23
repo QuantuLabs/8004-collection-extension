@@ -31,6 +31,13 @@
     "banner_image": {
       "$ref": "#/$defs/uriLike"
     },
+    "parent": {
+      "type": "string",
+      "description": "CIDv1 base32 lowercase of the parent collection document. Establishes a sub-collection hierarchy. The parent collection must share the same creator namespace (same creator_snapshot_caip10).",
+      "minLength": 59,
+      "maxLength": 256,
+      "pattern": "^b[a-z2-7]+$"
+    },
     "socials": {
       "$ref": "#/$defs/socials"
     }
