@@ -6,25 +6,26 @@
 
 ---
 
-## Guidance Scope
+## Normative Scope
 
-This document is a reference profile intended to guide implementations toward interoperable behavior.
-Implementations may diverge internally, provided they preserve deterministic collection identity and cross-indexer compatibility.
+This document defines observable behavior and conformance requirements for extension collections.
+It intentionally does not prescribe internal architecture or placement of logic (off-chain, on-chain, or mixed).
+Implementations may diverge internally, provided they preserve deterministic collection identity and cross-implementation compatibility.
 
 ---
 
 ## 1. Overview
 
-This specification defines a compact and indexer-friendly extension for ERC-8004 collections across Solana and EVM chains.
+This specification defines a compact, behavior-defined extension for ERC-8004 collections across Solana and EVM chains.
 
 The design aims to satisfy four constraints:
 
 - No change to core 8004 registries.
 - Minimal on-chain footprint.
-- Deterministic indexing across independent indexers.
+- Deterministic results across independent implementations.
 - Compatibility with existing SDK patterns that use metadata key/value writes.
 
-This specification defines a single native flow: **collection pointer on agent metadata**. An agent joins a collection by writing a single metadata entry that references a content-addressed document on IPFS. The indexer enforces immutability on this pointer after the first valid write.
+This specification standardizes one data interface: **collection pointer on agent metadata**. An agent joins a collection by writing a single metadata entry that references a content-addressed document on IPFS. Conforming implementations MUST enforce first-valid-write-wins immutability on this pointer, without prescribing where that enforcement runs.
 
 > **Note (out of scope):** explorer and marketplace implementations may later support creator-signed display overrides for UI fields, without changing canonical identity fields (`collection_key`, `creator_snapshot_caip10`, `cid_norm`) or lock state.
 
@@ -61,7 +62,7 @@ Values such as `ipfs://bafy...` or raw CIDv0 strings like `Qm...` are not valid 
 
 **CID input normalization:**
 
-SDKs and indexers SHOULD accept both CIDv0 (base58) and CIDv1 input and normalize to CIDv1 base32 lowercase before storage or comparison.
+SDKs and implementations SHOULD accept both CIDv0 (base58) and CIDv1 input and normalize to CIDv1 base32 lowercase before storage or comparison.
 
 Implementations MUST perform this normalization after CID parsing, not by lowercasing the raw input string. CIDv0 uses base58 encoding, which is case-sensitive; lowercasing before parsing would destroy CIDv0 input and produce an incorrect result.
 
@@ -108,6 +109,21 @@ The collection document is intentionally minimal to avoid duplicating agent-leve
 
 <br>
 
+**`parent` behavior (source-agnostic):**
+
+The JSON `parent` field is one supported carrier for parent linkage data. Implementations MAY also obtain an equivalent parent CID candidate from chain-native metadata/state.
+
+Regardless of source, behavior MUST be identical:
+
+1. A parent CID candidate, when present, MUST be parsed and normalized to CIDv1 base32 lowercase.
+2. On parse success, `parent_collection_key` MUST be derived as `creator_snapshot_caip10|parent_cid_norm`.
+3. On parse failure, the parent candidate MUST be ignored and the collection treated as root (`depth = 0`).
+4. Parent linkage evaluation MUST NOT mutate collection lock identity (`creator_snapshot_caip10`, `cid_norm`, `collection_key`).
+
+See sections 4.1 and 5.6 for full parent-linkage evaluation rules.
+
+<br>
+
 **Sanitization requirements:**
 
 The schema allows additional properties for forward compatibility. However, UIs MUST sanitize ALL fields from CID documents before rendering, including the defined schema fields (`name`, `symbol`, `description`, and `socials` values).
@@ -122,7 +138,7 @@ Any additional properties beyond the defined schema MUST NOT be rendered without
 
 ### 2.3 Asset Identifier Format
 
-To prevent cross-registry collisions, indexers SHOULD store the `asset` field in a canonical format that includes the chain identifier, registry address, and agent local ID:
+To prevent cross-registry collisions, implementations SHOULD store the `asset` field in a canonical format that includes the chain identifier, registry address, and agent local ID:
 
 ```
 <chain_id_caip2>/<registry_ref>/<agent_local_id>
@@ -173,7 +189,7 @@ The recommended creator identifier format is **CAIP-10** account IDs, which comb
 <caip2_chain_id>:<account_address>
 ```
 
-To ensure deterministic `collection_key` derivation across indexers, EVM account addresses in `creator_snapshot_caip10` and `asset` fields MUST be stored in lowercase, per the CAIP-10 specification for `eip155` namespaces. EIP-55 mixed-case encoding is reserved for display only.
+To ensure deterministic `collection_key` derivation across implementations, EVM account addresses in `creator_snapshot_caip10` and `asset` fields MUST be stored in lowercase, per the CAIP-10 specification for `eip155` namespaces. EIP-55 mixed-case encoding is reserved for display only.
 
 <br>
 
@@ -186,7 +202,7 @@ To ensure deterministic `collection_key` derivation across indexers, EVM account
 
 ### 3.3 Creator Snapshot Source
 
-The `creator_snapshot_caip10` is an indexer-derived field (not an on-chain event field) that captures the identity of the address that first registered the agent. It should be treated as immutable once set.
+The `creator_snapshot_caip10` is an implementation-derived field (not an on-chain event field) that captures the identity of the address that first registered the agent. It should be treated as immutable once set.
 
 On Solana, it is derived from the `owner` field of the first `AgentRegistered` event.
 On EVM, it comes from the `owner` field of the first `Registered` event.
@@ -201,7 +217,7 @@ Implementations should never use the current owner after transfers for creator s
 
 2. Projects that need user-scoped creator namespaces SHOULD ensure the end user is the first registration owner. This can be achieved by having the factory transfer ownership in the same transaction before the `Registered` event, or by delegating registration to the end user directly.
 
-3. Indexers SHOULD treat this field as a provenance namespace, not as a verified brand identity signal.
+3. Implementations SHOULD treat this field as a provenance namespace, not as a verified brand identity signal.
 
 4. UIs MUST display `creator_snapshot_caip10` prominently alongside the collection display name. Two collections with the same CID but different creators are distinct collections and MUST be visually distinguishable.
 
@@ -223,7 +239,7 @@ collection_key = <creator_snapshot_caip10>|<cid_norm>
 
 The pipe character `|` is used as separator because the colon `:` is already used inside CAIP identifiers.
 
-Indexer implementations should persist both the human-readable `collection_key` and the indexed tuple fields (`creator_snapshot_caip10`, `cid_norm`) for efficient querying.
+Implementations should persist both the human-readable `collection_key` and the indexed tuple fields (`creator_snapshot_caip10`, `cid_norm`) for efficient querying.
 
 <br>
 
@@ -239,23 +255,23 @@ Projects that need to update display metadata without fragmenting their collecti
 
 ## 4.1 Sub-Collections
 
-A collection can declare a parent by including a `parent` field in its CID document (section 2.2). The value is the CIDv1 base32 lowercase string of the parent collection's CID document.
+A collection can declare a parent by providing a parent CID candidate. The `parent` field in the CID document (section 2.2) is one supported source; an equivalent on-chain source is also valid.
 
 <br>
 
 **Authorization model:**
 
-Sub-collection authorization is implicit via the `collection_key` namespace. Because `collection_key = creator_snapshot_caip10|cid_norm`, a sub-collection relationship is only valid when the parent collection shares the same `creator_snapshot_caip10`. The indexer computes `parent_collection_key = creator_snapshot_caip10|parent_cid_norm` and verifies that at least one locked membership with this `collection_key` exists (regardless of `active` status). Cross-creator sub-collections are not possible: if Alice creates a parent and Bob creates a child referencing Alice's CID, the lookup `bob|parent_cid` will not match Alice's collection `alice|parent_cid`.
+Sub-collection authorization is implicit via the `collection_key` namespace. Because `collection_key = creator_snapshot_caip10|cid_norm`, a sub-collection relationship is only valid when the parent collection shares the same `creator_snapshot_caip10`. The implementation computes `parent_collection_key = creator_snapshot_caip10|parent_cid_norm` and verifies that at least one locked membership with this `collection_key` exists (regardless of `active` status). Cross-creator sub-collections are not possible: if Alice creates a parent and Bob creates a child referencing Alice's CID, the lookup `bob|parent_cid` will not match Alice's collection `alice|parent_cid`.
 
 <br>
 
 **Resolution:**
 
-The parent relationship is resolved during asynchronous CID document resolution (section 5.6), not at ingestion time. Lock state and membership identity are unaffected by the parent field. This means:
+The parent relationship is evaluated after lock decision for the originating `col` write, once a parent CID candidate is available from any supported source (CID document and/or on-chain source), per section 5.6. Lock state and membership identity are unaffected by parent linkage evaluation. This means:
 
 1. The `col` pointer is locked immediately based on pointer syntax (first-write-wins).
-2. When the CID document is resolved, the indexer extracts the `parent` field, normalizes the parent CID, and validates the parent relationship.
-3. If the parent collection exists in the index, the indexer stores `parent_cid_norm`, `parent_collection_key`, and `depth` on the membership row.
+2. The implementation obtains a parent CID candidate (if any), normalizes it, and validates the parent relationship.
+3. If the parent collection exists in state, the implementation stores `parent_cid_norm`, `parent_collection_key`, and `depth` on the membership row.
 4. If the parent collection does not exist, the parent relationship is stored as unresolved. The membership remains valid; only the hierarchy metadata is incomplete.
 
 <br>
@@ -268,27 +284,40 @@ The maximum sub-collection nesting depth is **8 levels**. A root collection (no 
 
 **Immutability:**
 
-Because the `parent` field is inside the CID document and the CID is content-addressed, the parent relationship is immutable. Changing the parent requires publishing a new CID document, which produces a new `cid_norm` and therefore a new `collection_key`. This is consistent with the immutable snapshot model (section 4).
+Parent linkage is an immutable snapshot for a locked membership. Once `parent_cid_norm` is finalized, it MUST NOT change during normal operation, with the same exceptional paths as depth recomputation (reorg replay and re-mint reset; see section 5.6).
+
+For CID-document sourcing, this follows naturally from content addressing. For on-chain sourcing, implementations MUST snapshot/evaluate the parent candidate at canonical evaluation position and MUST NOT rewrite historical parent linkage from later source updates.
 
 ---
 
-## 5. Indexer Specification
+## 5. Behavioral Semantics
+
+### 5.0 Conformance Interface (Normative)
+
+Implementations MAY use any internal architecture, but they MUST be mappable to the following abstract conformance interface:
+
+- `InputEvent`: canonical chain-derived event input with at least `(chain_id_caip2, asset, event_kind, key?, value?, owner?, canonical_position)`
+- `CanonicalPosition`: deterministic event order key; Solana `(slot, tx_index, log_index)`, EVM `(block_number, transaction_index, log_index)`
+- `MembershipState`: externally observable state for `(chain_id_caip2, asset)`, including `creator_snapshot_caip10`, `cid_norm`, `collection_key`, lock metadata, `active`, `parent_cid_norm`, `parent_collection_key`, `depth`
+- `HistoryOutcome`: externally observable event result in `{SET_LOCKED, SET_NOOP, SET_REJECTED_LOCKED, SET_REJECTED_NOT_CREATOR, SET_UNVERIFIABLE, DELETE_REJECTED_LOCKED, INVALID, DEACTIVATE, RE_REGISTERED}`
+
+Conformance is judged on equivalence of `MembershipState` and `HistoryOutcome` for equivalent canonical inputs, not on internal storage or execution topology.
 
 ### 5.1 Event Inputs
 
-Indexers should consume the following event types:
+Conforming implementations MUST evaluate equivalent inputs from canonical chain history. At minimum, the following event classes are required:
 
 1. **Registration events** — `AgentRegistered` on Solana and `Registered` on EVM, using the `owner` field to derive the creator snapshot.
 
-   Registration events MUST also initialize the ownership table entry for the agent, setting `current_owner` to the registration `owner`. This ensures ownership is known even when `MetadataSet(col)` occurs before the ERC-721 `Transfer` event within the same transaction (e.g., during mint flows).
+   Registration events MUST also initialize ownership state for the agent, setting `current_owner` to the registration `owner`. This ensures ownership is known even when `MetadataSet(col)` occurs before the ERC-721 `Transfer` event within the same transaction (e.g., during mint flows).
 
-   **Re-mint handling:** If a Registration event is processed for an asset that already has a row in the membership table (e.g., a re-minted EVM token ID), the indexer MUST delete the existing membership row, then delete and re-initialize the ownership entry from the new Registration event (new `creator_snapshot_caip10`, new `current_owner`). The membership row remains absent until a new valid `MetadataSet(col)` creates it via step 13. A `RE_REGISTERED` history event SHOULD be appended for audit.
+   **Re-mint handling:** If a Registration event is processed for an asset that already has membership state (e.g., a re-minted EVM token ID), the implementation MUST delete existing membership state, then delete and re-initialize ownership state from the new Registration event (new `creator_snapshot_caip10`, new `current_owner`). Membership remains absent until a new valid `MetadataSet(col)` creates it via step 13. A `RE_REGISTERED` history event SHOULD be appended for audit.
 
 2. **Metadata set events** — `MetadataSet`, which carry the key/value pair written by the agent owner.
 
-3. **Metadata delete events** — `MetadataDeleted`, where available. Not all 8004 registries emit this event. Indexers that do not have access to delete events SHOULD treat their absence as acceptable, since lock state is unaffected (deletes are rejected for locked memberships).
+3. **Metadata delete events** — `MetadataDeleted`, where available. Not all 8004 registries emit this event. Implementations that do not have access to delete events SHOULD treat their absence as acceptable, since lock state is unaffected (deletes are rejected for locked memberships).
 
-4. **Deactivation and burn signals** — On EVM, an NFT transfer to the zero address. On Solana, the chain-equivalent burn or close signal if exposed by the indexing source.
+4. **Deactivation and burn signals** — On EVM, an NFT transfer to the zero address. On Solana, the chain-equivalent burn or close signal if exposed by the selected chain data source.
 
 5. **Transfer events** — On EVM, the ERC-721 `Transfer(address indexed from, address indexed to, uint256 indexed tokenId)` event from the registry contract. On Solana, Metaplex Core transfer instruction logs or owner field changes detected from finalized block data.
 
@@ -300,9 +329,9 @@ Indexers should consume the following event types:
 
 ### 5.2 Canonical Ordering and Finality
 
-Collection immutability is an indexer policy. The core on-chain registries and programs remain unchanged and may still emit later metadata updates.
+Collection immutability is a behavioral requirement of this specification. The core on-chain registries and programs remain unchanged and may still emit later metadata updates.
 
-Indexers MUST use a canonical event ordering and MUST NOT rely on websocket or network arrival order.
+Implementations MUST use canonical event ordering and MUST NOT rely on websocket or network arrival order.
 
 <br>
 
@@ -326,15 +355,15 @@ The flat `log_index` approach is preferred over instruction-based tracking (`ins
 
 The Solana runtime enforces a per-transaction log byte limit. If a transaction exceeds this limit, the runtime silently truncates `meta.logMessages` and appends a `"Log truncated"` entry. Events emitted after the truncation point will not appear in the log array.
 
-Indexers relying on log-based event parsing MUST scan for the `"Log truncated"` sentinel before processing any events from a transaction.
+Implementations relying on log-based event parsing MUST scan for the `"Log truncated"` sentinel before processing any events from a transaction.
 
 All events from that transaction (Registration, Transfer, MetadataSet, Burn) MUST be deferred and queued for recovery via archive replay or state diff analysis, since truncated event payloads (including asset identifiers) may be lost. Events visible before the truncation point MUST also be deferred, because later events in the same transaction may have been truncated.
 
-On recovery, indexers MUST replay all events for affected assets from the recovered transaction's canonical position forward (including events from subsequent transactions that were already processed), to ensure ownership and lock state are consistent.
+On recovery, implementations MUST replay all events for affected assets from the recovered transaction's canonical position forward (including events from subsequent transactions that were already processed), to ensure ownership and lock state are consistent.
 
 If recovery is impossible (no archive source available), the transaction MUST remain permanently quarantined and its events never processed. For assets known to be affected by the quarantined transaction, the `SET_UNVERIFIABLE` blocking rule (section 5.7) applies: their `col` processing remains blocked until archive recovery is eventually performed. For assets whose involvement cannot be determined (truncated payloads hide the asset identifier), subsequent transactions proceed normally for first-write-wins evaluation.
 
-Note: when truncated payloads prevent identification of affected assets, temporary cross-indexer divergence is accepted until archive recovery resolves the quarantined transaction.
+Note: when truncated payloads prevent identification of affected assets, temporary cross-implementation divergence is accepted until archive recovery resolves the quarantined transaction.
 
 <br>
 
@@ -365,11 +394,11 @@ Rollback handling SHOULD be driven by chain-native indicators:
 - **EVM**: canonical block hash tracking and `removed=true` logs when available.
 - **Solana**: finalized/root progression replacing pre-finalized views.
 
-Indexers SHOULD compare the stored `lock_block_hash` against the canonical chain to detect if a lock event was orphaned. If a mismatch is found, the lock MUST be reverted and recomputed from canonical history.
+Implementations SHOULD compare the stored `lock_block_hash` against the canonical chain to detect if a lock event was orphaned. If a mismatch is found, the lock MUST be reverted and recomputed from canonical history.
 
 <br>
 
-### 5.4 Ingestion Rules
+### 5.4 Event Evaluation Rules
 
 This specification intentionally does not define any unlock, detach, or admin-override flow for `col`.
 
@@ -397,7 +426,7 @@ This specification intentionally does not define any unlock, detach, or admin-ov
 
 9. If an existing locked membership exists for `(chain_id_caip2, asset)`: if it has the same `cid_norm`, treat as idempotent (`SET_NOOP`); if different, reject (`SET_REJECTED_LOCKED`). In either case, skip to step 14. This short-circuit avoids unnecessary ownership checks and false deferrals for already-locked assets.
 
-10. Load the `creator_snapshot_caip10` for this asset. If unavailable (e.g., Registration event not yet indexed), treat as `SET_UNVERIFIABLE` and skip to step 14.
+10. Load the `creator_snapshot_caip10` for this asset. If unavailable (e.g., registration not yet available in local canonical state), treat as `SET_UNVERIFIABLE` and skip to step 14.
 
 11. Verify that the current tracked owner of this asset matches `creator_snapshot_caip10` (see section 5.7). If the agent has been transferred and the current owner differs from the original creator, reject the write (event type `SET_REJECTED_NOT_CREATOR`) and skip to step 14. The agent's `col` slot remains open for a future valid write if ownership returns to the original creator.
 
@@ -421,7 +450,7 @@ Because of first-write-wins, this permanently locks the agent's collection membe
 
 An already-registered agent with no locked `col` may join a collection at any time via its first valid `setMetadata("col", "c1:<cid_norm>")`.
 
-The underlying registry's ownership rules apply to `setMetadata`; this profile does not add extra write authority. Once the first valid `col` is indexed, membership becomes immutable.
+The underlying registry's ownership rules apply to `setMetadata`; this profile does not add extra write authority. Once the first valid `col` is accepted, membership becomes immutable.
 
 If the agent is no longer controlled by the original creator, the `col` write will be rejected by the ownership check until ownership returns to the original creator (section 5.7).
 
@@ -441,7 +470,7 @@ If no locked membership exists, this is a no-op. If a locked membership exists, 
 
 #### On malformed value
 
-Malformed values are handled non-fatally. The indexer records the malformed event in the history table with event type `INVALID` and an `invalid_reason` field. No row is inserted or updated in the membership table. This avoids conflicts with NOT NULL constraints on `cid_norm` and `collection_key` in the membership table.
+Malformed values are handled non-fatally. The implementation records the malformed event with event type `INVALID` and an `invalid_reason` field. No membership lock state is created or updated.
 
 The agent remains eligible to set a valid `col` in a future transaction.
 
@@ -453,122 +482,44 @@ The membership is marked `active=false` for the given `(chain_id_caip2, asset)`.
 
 <br>
 
-### 5.5 Recommended Tables
+### 5.5 State Model (Normative)
 
-```sql
-CREATE TABLE extension_collection_memberships (
-  chain_id_caip2          TEXT        NOT NULL,
-  asset                   TEXT        NOT NULL,
-  creator_snapshot_caip10 TEXT        NOT NULL,
-  cid_norm                TEXT        NOT NULL,
-  collection_key          TEXT        NOT NULL,
-  col_locked              BOOLEAN     NOT NULL DEFAULT TRUE,
-  lock_tx_hash            TEXT,
-  lock_block_number       BIGINT,
-  lock_block_hash         TEXT,
-  lock_block_timestamp    TIMESTAMPTZ,
-  lock_tx_index           INTEGER,
-  lock_log_index          INTEGER,
-  lock_slot               BIGINT,
-  parent_cid_norm         TEXT,
-  parent_collection_key   TEXT,
-  depth                   INTEGER,
-  lock_created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  active                  BOOLEAN     NOT NULL DEFAULT TRUE,
-  first_seen_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (chain_id_caip2, asset)
-);
-```
+Conforming implementations MUST maintain equivalent state that can produce the same externally observable outcomes, regardless of internal storage design. At minimum, the state model MUST represent:
 
-```sql
-CREATE TABLE extension_agent_ownership (
-  chain_id_caip2          TEXT        NOT NULL,
-  asset                   TEXT        NOT NULL,
-  creator_snapshot_caip10 TEXT        NOT NULL,
-  current_owner           TEXT        NOT NULL,
-  previous_owner          TEXT,
-  block_number     BIGINT,
-  block_hash       TEXT,
-  slot             BIGINT,
-  tx_hash          TEXT,
-  tx_index         INTEGER,
-  log_index        INTEGER,
-  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (chain_id_caip2, asset)
-);
-```
+- Membership identity fields: `chain_id_caip2`, `asset`, `creator_snapshot_caip10`, `cid_norm`, `collection_key`
+- Membership status fields: lock status, `active`, and canonical lock position metadata (`block/slot`, `tx_index`, `log_index`)
+- Parent linkage fields: `parent_cid_norm`, `parent_collection_key`, `depth`
+- Ownership state: current owner at canonical event positions for each `(chain_id_caip2, asset)`
+- History outcomes: `SET_LOCKED`, `SET_NOOP`, `SET_REJECTED_LOCKED`, `SET_REJECTED_NOT_CREATOR`, `SET_UNVERIFIABLE`, `DELETE_REJECTED_LOCKED`, `INVALID`, `DEACTIVATE`, `RE_REGISTERED`
 
-```sql
-CREATE TABLE extension_collection_membership_history (
-  id                      BIGSERIAL   PRIMARY KEY,
-  chain_id_caip2          TEXT        NOT NULL,
-  asset                   TEXT        NOT NULL,
-  creator_snapshot_caip10 TEXT,
-  cid_norm                TEXT,
-  collection_key          TEXT,
-  event_type              TEXT        NOT NULL,
-    -- SET_LOCKED | SET_NOOP | SET_REJECTED_LOCKED
-    -- SET_REJECTED_NOT_CREATOR | SET_UNVERIFIABLE
-    -- DELETE_REJECTED_LOCKED | INVALID | DEACTIVATE
-    -- RE_REGISTERED
-  tx_hash                 TEXT,
-  block_number            BIGINT,
-  block_hash              TEXT,
-  block_timestamp         TIMESTAMPTZ,
-  tx_index                INTEGER,
-  log_index               INTEGER,
-  slot                    BIGINT,
-  invalid_reason          TEXT,
-  removed                 BOOLEAN     NOT NULL DEFAULT FALSE,
-  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
+The `block_timestamp` fields, when materialized, SHOULD be populated from chain block header timestamps, not processing wall-clock time.
 
-```sql
-CREATE INDEX idx_ext_collection_key
-  ON extension_collection_memberships(collection_key)
-  WHERE active = TRUE;
-
-CREATE INDEX idx_ext_collection_creator_cid
-  ON extension_collection_memberships(creator_snapshot_caip10, cid_norm)
-  WHERE active = TRUE;
-
-CREATE INDEX idx_ext_collection_cid
-  ON extension_collection_memberships(cid_norm)
-  WHERE active = TRUE;
-
-CREATE INDEX idx_ext_collection_parent
-  ON extension_collection_memberships(parent_collection_key)
-  WHERE parent_collection_key IS NOT NULL;
-
-CREATE INDEX idx_ext_collection_key_all
-  ON extension_collection_memberships(collection_key);
-  -- Unfiltered: used for parent existence checks (regardless of active status)
-```
-
-The `block_timestamp` fields SHOULD be populated from chain block header timestamps, not from ingestion wall-clock time.
+Reference SQL tables and indexes are provided in **Appendix A (non-normative)**.
 
 <br>
 
-### 5.6 CID Document Resolution (Non-Blocking)
+### 5.6 Parent Linkage and CID Document Resolution
 
-Collection lock decisions MUST be based solely on pointer syntax and normalization (the `col` value). Resolving the pointed CID document to retrieve collection metadata MUST be performed asynchronously and MUST NOT block ingestion workers.
+Collection lock decisions MUST be based solely on pointer syntax and normalization (the `col` value). Parent linkage evaluation MUST NOT change the lock decision for that event.
+
+CID document fetch is one common way to obtain collection metadata and parent linkage data, but parent linkage data MAY also come from on-chain sources. This section defines expected behavior once a parent CID candidate is available, regardless of source.
 
 A failed or slow document fetch MUST NOT prevent lock state updates.
 
-Indexers SHOULD enforce bounded fetches with a recommended maximum document size of 64 KB and a fetch timeout of 10 seconds. Resolution failures SHOULD be stored as diagnostic state for UI and operational tooling, without mutating any locked membership identity.
+Implementations SHOULD enforce bounded fetches with a recommended maximum document size of 64 KB and a fetch timeout of 10 seconds. Resolution failures SHOULD be stored as diagnostic state for UI and operational tooling, without mutating any locked membership identity.
 
-Before applying resolution results (parent, depth), indexers MUST verify that the membership's `cid_norm` and `creator_snapshot_caip10` have not changed since the resolution was initiated (e.g., due to reorg or re-mint). Stale results MUST be discarded.
+Before applying parent/depth results, implementations MUST verify that the membership's `cid_norm` and `creator_snapshot_caip10` have not changed since evaluation was initiated (e.g., due to reorg or re-mint). Stale results MUST be discarded.
 
-Indexers SHOULD cache successfully resolved CID documents locally and serve cached content as a fallback when IPFS resolution fails or when the document is no longer pinned on any node. Because the CID is content-addressed, cached content is guaranteed to match the original as long as the CID matches.
+Implementations SHOULD cache successfully resolved CID documents locally and serve cached content as a fallback when IPFS resolution fails or when the document is no longer pinned on any node. Because the CID is content-addressed, cached content is guaranteed to match the original as long as the CID matches.
 
-When the resolved document does not contain a `parent` field, the indexer MUST set `depth = 0` (root collection).
+When no parent CID candidate is available from supported sources, the implementation MUST set `depth = 0` (root collection).
 
-When the resolved document contains a `parent` field, the indexer MUST attempt to parse and normalize the parent CID to CIDv1 base32 lowercase.
+When a parent CID candidate is available, the implementation MUST attempt to parse and normalize it to CIDv1 base32 lowercase.
 
-- **Parse failure:** If the value matches the schema regex but is not a valid CID, the indexer MUST ignore the parent field: set `parent_cid_norm = NULL`, `parent_collection_key = NULL`, `depth = 0` (treat as root), and log a diagnostic event.
-- **Parse success:** The indexer MUST compute `parent_collection_key = creator_snapshot_caip10|parent_cid_norm` and verify that at least one locked membership with this `collection_key` exists (regardless of `active` status, since collection identity is immutable) (see section 4.1). The indexer MUST always store `parent_cid_norm` and `parent_collection_key`, regardless of whether the parent collection exists yet.
+- **Parse failure:** If the candidate is not a valid CID, the implementation MUST ignore it: set `parent_cid_norm = NULL`, `parent_collection_key = NULL`, `depth = 0` (treat as root), and log a diagnostic event.
+- **Parse success:** The implementation MUST compute `parent_collection_key = creator_snapshot_caip10|parent_cid_norm` and verify that at least one locked membership with this `collection_key` exists (regardless of `active` status, since collection identity is immutable) (see section 4.1). The implementation MUST always store `parent_cid_norm` and `parent_collection_key`, regardless of whether the parent collection exists yet.
+
+If multiple sources provide different parent CID candidates for the same `collection_key`, implementations MUST resolve conflicts deterministically with the following precedence: explicit on-chain source first, CID document `parent` second.
 
 **Depth finalization:**
 
@@ -581,13 +532,13 @@ When the resolved document contains a `parent` field, the indexer MUST attempt t
 1. During reorg replay (section 5.3), depth is recomputed from canonical history and may change, including reverting to NULL if ancestry cannot be resolved.
 2. When a re-mint (section 5.1 item 1) deletes the last membership row for a parent `collection_key`, child collections referencing that parent MUST have their depth reverted to NULL (parent no longer exists).
 
-**Depth cascade:** Indexers MUST cascade depth updates: when a collection's depth changes (NULL to finalized, finalized to NULL due to re-mint or reorg, or between finalized values after reorg replay), all children sharing its `parent_collection_key` MUST be re-evaluated.
+**Depth cascade:** Implementations MUST cascade depth updates: when a collection's depth changes (NULL to finalized, finalized to NULL due to re-mint or reorg, or between finalized values after reorg replay), all children sharing its `parent_collection_key` MUST be re-evaluated.
 
 <br>
 
 ### 5.7 Ownership Tracking
 
-Indexers MUST maintain a local ownership state for each agent, updated from Transfer events (section 5.1, item 5). This ownership table maps each `(chain_id_caip2, asset)` to its `current_owner` in CAIP-10 format.
+Implementations MUST maintain ownership state for each agent, updated from Transfer events (section 5.1, item 5). This ownership state maps each `(chain_id_caip2, asset)` to its `current_owner` in CAIP-10 format.
 
 <br>
 
@@ -595,15 +546,15 @@ Indexers MUST maintain a local ownership state for each agent, updated from Tran
 
 The `col` metadata key binds agents to a creator's collection namespace. Because `creator_snapshot_caip10` is derived from the first registration owner and never changes, an agent that has been transferred to a different owner still carries the original creator's namespace. Without ownership verification, the new owner could write `col` and place the agent into the original creator's collection without authorization.
 
-Ownership tracking prevents this: on every `MetadataSet(col)` event, the indexer compares the current tracked owner to `creator_snapshot_caip10`. If they differ, the write is rejected.
+Ownership tracking prevents this: on every `MetadataSet(col)` event, the implementation compares the current tracked owner to `creator_snapshot_caip10`. If they differ, the write is rejected.
 
 <br>
 
 #### Implementation
 
-On EVM, indexers ingest `Transfer(from, to, tokenId)` events from the registry contract and update the local ownership table. On Solana, indexers track Metaplex Core transfer instructions or detect owner field changes from finalized block data.
+On EVM, implementations ingest `Transfer(from, to, tokenId)` events from the registry contract and update ownership state. On Solana, implementations track Metaplex Core transfer instructions or detect owner field changes from finalized block data.
 
-The ownership table is a materialized cache: `(chain_id_caip2, asset) → current_owner`. It is not the source of truth; the canonical event stream is. On chain reorganizations, the ownership table MUST be rebuilt by replaying canonical events from the last finalized checkpoint (see section 5.3).
+Ownership state is a materialized cache: `(chain_id_caip2, asset) → current_owner`. It is not the source of truth; the canonical event stream is. On chain reorganizations, ownership state MUST be rebuilt by replaying canonical events from the last finalized checkpoint (see section 5.3).
 
 The `previous_owner` column is an optimization for single-step rollbacks only; if multiple Transfer events for the same asset occur within a single block, or for multi-block reorgs, full replay from the last finalized checkpoint is required.
 
@@ -613,9 +564,9 @@ Storage overhead is approximately 80–150 bytes per agent. For a registry of 10
 
 #### Fallback for cold start
 
-When an indexer starts fresh or encounters an agent whose ownership is not yet tracked, it MAY bootstrap ownership state using the following chain-specific methods:
+When an implementation starts fresh or encounters an agent whose ownership is not yet tracked, it MAY bootstrap ownership state using the following chain-specific methods:
 
-- **EVM**: replay Transfer events from archive logs/traces to reconstruct ownership at the exact event position. A single `ownerOf` RPC call returns end-of-block state and MUST NOT be used when additional Transfer events for the same asset exist later in the same block, as those would change the result. `ownerOf(blockNumber)` is acceptable only when the indexer has confirmed no later same-block transfers exist for that asset. Querying `latest` state is unsafe because the current owner may differ from the owner at the historical event's block.
+- **EVM**: replay Transfer events from archive logs/traces to reconstruct ownership at the exact event position. A single `ownerOf` RPC call returns end-of-block state and MUST NOT be used when additional Transfer events for the same asset exist later in the same block, as those would change the result. `ownerOf(blockNumber)` is acceptable only when the implementation has confirmed no later same-block transfers exist for that asset. Querying `latest` state is unsafe because the current owner may differ from the owner at the historical event's block.
 - **Solana**: replay `getBlock` data from the agent's registration slot forward, since Solana's `getAccountInfo` RPC does not support historical slot queries. Alternatively, use a specialized indexing service that provides historical account state.
 
 If historical ownership cannot be determined, the `col` write MUST be deferred with event type `SET_UNVERIFIABLE` rather than evaluated against present-day state.
@@ -624,15 +575,15 @@ Deferred events MUST block further `col` processing for that specific asset unti
 
 When replaying deferred `col` events, the ownership check MUST use the historical owner at each event's original canonical sort key, not the current owner. Implementations SHOULD reconstruct the asset's full event sequence (including Transfers) from the earliest deferred point to ensure correct ownership state at each evaluation.
 
-This fallback SHOULD only be used during initial sync or gap repair, not during steady-state ingestion.
+This fallback SHOULD only be used during initial sync or gap repair, not during steady-state processing.
 
 <br>
 
 #### Same-transaction ordering
 
-When a Transfer event and a MetadataSet(col) event occur within the same transaction, the unified processing queue (section 5.2) ensures they are evaluated in `log_index` order. If the Transfer is emitted before the MetadataSet, the ownership table is updated before the `col` write is evaluated. If the MetadataSet is emitted before the Transfer, the `col` write is evaluated against the pre-transfer owner. Implementations MUST NOT reorder events within a transaction.
+When a Transfer event and a MetadataSet(col) event occur within the same transaction, the unified processing queue (section 5.2) ensures they are evaluated in `log_index` order. If the Transfer is emitted before the MetadataSet, ownership state is updated before the `col` write is evaluated. If the MetadataSet is emitted before the Transfer, the `col` write is evaluated against the pre-transfer owner. Implementations MUST NOT reorder events within a transaction.
 
-For log-based indexers with `log_index` ordering, the standard launchpad/factory flow (Register → SetCol → Transfer in one transaction) is handled correctly by normal `log_index` order: the `MetadataSet(col)` is processed while the creator is still the owner.
+For log-based implementations with `log_index` ordering, the standard launchpad/factory flow (Register → SetCol → Transfer in one transaction) is handled correctly by normal `log_index` order: the `MetadataSet(col)` is processed while the creator is still the owner.
 
 On Solana, when ownership is derived from account state diffs (which lack a `log_index`), the ownership update is applied at the transaction boundary after all log-based events in that transaction.
 
@@ -656,27 +607,27 @@ This specification uses native open tagging semantics, meaning any agent owner c
 
 | # | Risk | Mitigation |
 |---|------|------------|
-| 1 | **Sybil and spam collections**: anyone can create collections by publishing a CID. | Display the full `collection_key` (not only the display name) and apply indexer-level anti-spam controls. |
+| 1 | **Sybil and spam collections**: anyone can create collections by publishing a CID. | Display the full `collection_key` (not only the display name) and apply implementation/API-level anti-spam controls. |
 | 2 | **Brand impersonation**: two different creators can point to the same CID, creating two visually similar but distinct collections. | UIs MUST display `creator_snapshot_caip10` prominently alongside the collection name so users can distinguish them. |
-| 3 | **No on-chain governance**: collection rules exist only at the indexer layer. | Add reputation and trust scoring for creators at the API and UI level. |
+| 3 | **No on-chain governance**: collection rules can live outside core registries. | Add reputation and trust scoring for creators at the API and UI level. |
 | 4 | **Creator wallet rotation**: registering agents from a new wallet creates a new creator namespace, fragmenting the collection. | Projects SHOULD keep a stable registration wallet. This is by design, not a protocol flaw. |
 | 5 | **Irreversible first write**: human error on the first valid `col` write cannot be undone. | SDKs and UIs SHOULD require explicit confirmation before the first `col` write. |
 | 6 | **Collection identity fragmentation**: changing the collection JSON document produces a new CID and a new `collection_key`, splitting the collection across old and new CIDs. | Treat collection versions as intentional "seasons" with documented CID lineage, or use a display override layer. |
 | 7 | **Operator and delegate griefing**: a temporary operator can irrevocably lock agents into a garbage collection via first-write-wins. | SDKs and UIs SHOULD warn owners that approving operators grants irrevocable `col` write authority. |
-| 8 | **CID document availability**: if the document is unpinned from all IPFS nodes, display metadata is lost (collection identity is preserved but the UI degrades). | Indexers SHOULD cache CID documents locally as an availability fallback (see section 5.6). |
+| 8 | **CID document availability**: if the document is unpinned from all IPFS nodes, display metadata is lost (collection identity is preserved but the UI degrades). | Implementations SHOULD cache CID documents locally as an availability fallback (see section 5.6). |
 | 9 | **Mempool front-running**: on EVM chains, pending `col` transactions are visible in the public mempool, enabling attackers with operator or delegate permissions to front-run with a malicious collection pointer. On Solana, analogous attacks are possible via MEV and priority fees. | SDKs SHOULD use private transaction submission (e.g., Flashbots Protect, MEV-resistant RPCs) for `col` set operations when available. On Solana, SDKs SHOULD use priority fees for `col` transactions. |
-| 10 | **Namespace pollution via transferred agents**: if an agent is transferred after registration, the new owner inherits the original `creator_snapshot_caip10` namespace. Without ownership verification, the new owner could write `col` and place agents into the original creator's collection. | Indexers MUST track Transfer events and verify that the current owner matches `creator_snapshot_caip10` before accepting a `col` write (see section 5.7). |
-| 11 | **Dangling sub-collection parents**: a CID document may reference a `parent` CID for which no collection exists in the index, creating an unresolved hierarchy. | Indexers store the parent CID and mark the relationship as unresolved. Depth cascades automatically when matching parent collections are created or finalized (section 5.6). |
+| 10 | **Namespace pollution via transferred agents**: if an agent is transferred after registration, the new owner inherits the original `creator_snapshot_caip10` namespace. Without ownership verification, the new owner could write `col` and place agents into the original creator's collection. | Implementations MUST track Transfer events and verify that the current owner matches `creator_snapshot_caip10` before accepting a `col` write (see section 5.7). |
+| 11 | **Dangling sub-collection parents**: a parent CID candidate may reference a parent for which no collection exists in state, creating an unresolved hierarchy. | Implementations store the parent CID and mark the relationship as unresolved. Depth cascades automatically when matching parent collections are created or finalized (section 5.6). |
 
 <br>
 
-An overarching mitigation is to keep immutable history for audit and dispute analysis (see the history table in section 5.5).
+An overarching mitigation is to keep immutable history for audit and dispute analysis (see the history model in section 5.5).
 
 ---
 
-## 7. Validation Guidelines
+## 7. Behavioral Conformance Checklist
 
-The following guidelines represent the baseline checks that implementations should perform. They are numbered for reference but do not imply a required execution order.
+The following checklist defines baseline conformance outcomes. Items are numbered for reference and do not imply a required execution order.
 
 <br>
 
@@ -690,23 +641,23 @@ The following guidelines represent the baseline checks that implementations shou
 
 5. The canonical storage form must use CIDv1 base32 lowercase.
 
-6. Invalid entries must not halt ingestion; they should be stored with a reason and excluded from default queries.
+6. Invalid entries must not halt processing; they should be stored with a reason and excluded from default queries.
 
 7. The `creator_snapshot_caip10` must be derived from the first registration owner event, not from the current owner.
 
-8. The `col` key must be treated as immutable after the first valid indexed value (first-write-wins).
+8. The `col` key must be treated as immutable after the first valid accepted value (first-write-wins).
 
 9. On Solana, events from failed transactions (`meta.err != null`) must be ignored.
 
 10. Canonical sort order (section 5.2) must be applied before evaluating first-write-wins.
 
-11. If non-finalized ingestion is used, rollback handling must follow section 5.3.
+11. If non-finalized data processing is used, rollback handling must follow section 5.3.
 
 12. The `asset` field must use the canonical `<chain_id_caip2>/<registry_ref>/<agent_local_id>` format.
 
-13. The `block_timestamp` fields must come from chain block headers, not ingestion wall-clock time.
+13. The `block_timestamp` fields must come from chain block headers, not processing wall-clock time.
 
-14. CID document resolution must be non-blocking and bounded (section 5.6).
+14. Parent linkage evaluation must preserve lock outcomes and be bounded in resource usage; CID-document-based resolution, when used, should be non-blocking (section 5.6).
 
 15. Burn and deactivation signals must set `active=false` without mutating the locked identity fields.
 
@@ -726,11 +677,11 @@ The following guidelines represent the baseline checks that implementations shou
 
 23. EVM account addresses in CAIP-10 identifiers must be stored in lowercase per CAIP-10. EIP-55 encoding is for display only.
 
-24. Solana indexers MUST detect the `"Log truncated"` sentinel in `meta.logMessages` and flag affected transactions as incomplete.
+24. Solana implementations using log-based parsing MUST detect the `"Log truncated"` sentinel in `meta.logMessages` and flag affected transactions as incomplete.
 
-25. Indexers must track Transfer events and maintain a local ownership table mapping each agent to its current owner (section 5.7).
+25. Implementations must track Transfer events and maintain equivalent ownership state mapping each agent to its current owner (section 5.7).
 
-26. On every `MetadataSet(col)` event, indexers must verify that the current tracked owner matches `creator_snapshot_caip10` before processing the collection write. Writes from non-creator owners must be rejected with `SET_REJECTED_NOT_CREATOR`.
+26. On every `MetadataSet(col)` event, implementations must verify that the current tracked owner matches `creator_snapshot_caip10` before processing the collection write. Writes from non-creator owners must be rejected with `SET_REJECTED_NOT_CREATOR`.
 
 27. All event types (Registration, Transfer, MetadataSet, MetadataDeleted, Burn) must be processed in a single unified queue ordered by canonical sort key. Type-batched processing is prohibited.
 
@@ -740,13 +691,15 @@ The following guidelines represent the baseline checks that implementations shou
 
 30. `SET_UNVERIFIABLE` events must block further `col` processing for that specific asset until ownership is resolved, to preserve first-write-wins ordering.
 
-31. Registration events must initialize the ownership table entry for the agent, ensuring ownership is known before any same-transaction MetadataSet events.
+31. Registration events must initialize ownership state for the agent, ensuring ownership is known before any same-transaction MetadataSet events.
 
-32. When a resolved CID document contains a `parent` field, indexers must attempt to parse and normalize the parent CID. On success, always store `parent_cid_norm` and `parent_collection_key`, and validate parent existence for depth finalization (section 5.6). On parse failure, ignore the parent field and treat as root (depth 0).
+32. When a parent CID candidate is available (from CID document `parent` and/or on-chain source), implementations must attempt to parse and normalize it. On success, always store `parent_cid_norm` and `parent_collection_key`, and validate parent existence for depth finalization (section 5.6). On parse failure, ignore the parent candidate and treat as root (depth 0).
 
 33. Sub-collection depth must not exceed 8 levels. Depth is finalized only when the full ancestry to a root is resolved (`NULL` while pending).
 
 34. Cross-creator sub-collections are not valid. The parent lookup uses the child's `creator_snapshot_caip10`, ensuring only the same creator namespace can form a hierarchy.
+
+35. If CID and on-chain sources provide conflicting parent CID candidates for the same `collection_key`, implementations must apply the canonical precedence from section 5.6 (on-chain first, CID document second).
 
 ---
 
@@ -787,13 +740,13 @@ Expected: `active=false` with the locked `collection_key` and identity fields pr
 <br>
 
 **6. CIDv0 normalization.**
-An agent sets `col=c1:QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG`. The SDK or indexer parses this as CIDv0 and normalizes it to CIDv1 base32 lowercase.
+An agent sets `col=c1:QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG`. The SDK or implementation parses this as CIDv0 and normalizes it to CIDv1 base32 lowercase.
 Expected: `cid_norm` is the CIDv1 base32 equivalent of the original QmY... hash.
 
 <br>
 
 **7. Uppercase base32 input.**
-An agent sets `col=c1:BAFYBEIGDYRZT5...` (uppercase). The indexer normalizes to lowercase before storage.
+An agent sets `col=c1:BAFYBEIGDYRZT5...` (uppercase). The implementation normalizes to lowercase before storage.
 Expected: accepted with a normalized value of `bafybeigdyrzt5...`.
 
 <br>
@@ -872,7 +825,7 @@ Expected: accepted and locked normally, because the current owner matches `creat
 
 **20. Same-transaction transfer then col write.**
 A single transaction emits `Transfer(0xAlice, 0xBob, agentId)` at `log_index=5`, then `MetadataSet(col)` at `log_index=8`. The agent's `creator_snapshot_caip10` is `0xAlice`.
-Expected: ownership table updates to `0xBob` at log_index=5. The col write at log_index=8 is rejected with `SET_REJECTED_NOT_CREATOR` because current_owner (`0xBob`) differs from creator (`0xAlice`).
+Expected: ownership state updates to `0xBob` at log_index=5. The col write at log_index=8 is rejected with `SET_REJECTED_NOT_CREATOR` because current_owner (`0xBob`) differs from creator (`0xAlice`).
 
 <br>
 
@@ -883,19 +836,19 @@ Expected: ownership state rolls back to `0xAlice`. Any `col` writes evaluated ag
 <br>
 
 **22. Sub-collection with valid parent.**
-Agent A is registered by `0xAlice` and sets `col=c1:bafyChild...`. The CID document at `bafyChild` contains `"parent": "bafyParent..."`. Alice already has an active locked collection with `collection_key = 0xAlice|bafyParent...` at depth 0.
-Expected: after CID document resolution, Agent A's membership is updated with `parent_cid_norm = bafyParent...`, `parent_collection_key = 0xAlice|bafyParent...`, `depth = 1`.
+Agent A is registered by `0xAlice` and sets `col=c1:bafyChild...`. A parent CID candidate `bafyParent...` is provided (for example via CID document `parent` or equivalent on-chain source). Alice already has an active locked collection with `collection_key = 0xAlice|bafyParent...` at depth 0.
+Expected: after parent linkage evaluation, Agent A's membership is updated with `parent_cid_norm = bafyParent...`, `parent_collection_key = 0xAlice|bafyParent...`, `depth = 1`.
 
 <br>
 
 **23. Sub-collection with non-existent parent.**
-Agent A is registered by `0xAlice` and sets `col=c1:bafyChild...`. The CID document contains `"parent": "bafyOrphan..."`. No collection with `collection_key = 0xAlice|bafyOrphan...` exists.
+Agent A is registered by `0xAlice` and sets `col=c1:bafyChild...`. A parent CID candidate `bafyOrphan...` is provided. No collection with `collection_key = 0xAlice|bafyOrphan...` exists.
 Expected: membership is locked normally (lock state is unaffected). Parent relationship is stored as unresolved: `parent_cid_norm = bafyOrphan...`, `parent_collection_key = 0xAlice|bafyOrphan...`, `depth = NULL`.
 
 <br>
 
 **24. Cross-creator sub-collection attempt.**
-Agent A is registered by `0xBob` and sets `col=c1:bafyChild...`. The CID document contains `"parent": "bafyParent..."`. A collection `0xAlice|bafyParent...` exists, but no collection `0xBob|bafyParent...` exists.
+Agent A is registered by `0xBob` and sets `col=c1:bafyChild...`. A parent CID candidate `bafyParent...` is provided. A collection `0xAlice|bafyParent...` exists, but no collection `0xBob|bafyParent...` exists.
 Expected: parent relationship is unresolved because the lookup uses Bob's creator namespace, not Alice's.
 
 <br>
@@ -908,13 +861,19 @@ Expected: parent relationship is rejected and logged as a diagnostic event. Memb
 
 **26. Same-transaction registration, col write, then transfer (factory flow).**
 A factory contract emits `Registration(agentId, factory)` at `log_index=2`, `MetadataSet(col)` at `log_index=5`, and `Transfer(factory, buyer, agentId)` at `log_index=8` in a single transaction. The `creator_snapshot_caip10` is the factory address.
-Expected: the `col` write at `log_index=5` is accepted (`SET_LOCKED`) because the owner is still the factory at that point. The ownership table is updated to `buyer` at `log_index=8` after the lock is already in place.
+Expected: the `col` write at `log_index=5` is accepted (`SET_LOCKED`) because the owner is still the factory at that point. Ownership state updates to `buyer` at `log_index=8` after the lock is already in place.
 
 <br>
 
 **27. Same-transaction registration, transfer, then post-transfer col write (hijack prevention).**
 A factory emits `Registration(agentId, factory)` at `log_index=2`, `Transfer(factory, buyer, agentId)` at `log_index=5`. The buyer's contract calls `setMetadata(col)` via `onERC721Received` at `log_index=8`.
 Expected: the `col` write at `log_index=8` is rejected with `SET_REJECTED_NOT_CREATOR` because the current owner is `buyer`, not the factory. No registration exception overrides this.
+
+<br>
+
+**28. Parent source equivalence and deterministic conflict handling.**
+For the same `collection_key`, one implementation receives parent CID from CID document (`parent = bafyDoc...`) and another receives an on-chain parent CID (`bafyChain...`), with different values.
+Expected: both implementations apply the canonical precedence rule from section 5.6 (on-chain first). On-chain parent wins, and both converge to identical `parent_cid_norm`, `parent_collection_key`, and `depth`.
 
 ---
 
@@ -925,7 +884,7 @@ function trimAsciiWhitespace(s: string): string {
   return s.replace(/^[\x09\x0a\x0d\x20]+|[\x09\x0a\x0d\x20]+$/g, "");
 }
 
-// SDK-facing helper — not part of the indexer ingestion pipeline.
+// SDK-facing helper — not part of the canonical event-evaluation pipeline.
 function normalizeCollectionCid(input: string): string | null {
   try {
     const raw = trimAsciiWhitespace(input);
@@ -1008,7 +967,7 @@ function compareSolanaEventOrder(
 
 ---
 
-## 10. Implementation Baseline
+## 10. Interoperability Baseline
 
 For best interoperability, implementations should align on the following practices:
 
@@ -1024,14 +983,112 @@ For best interoperability, implementations should align on the following practic
 
 6. Handle malformed collection pointers non-fatally.
 
-7. Lock `col` after the first valid indexed value (first-write-wins).
+7. Lock `col` after the first valid accepted value (first-write-wins).
 
-8. Use canonical `<chain_id_caip2>/<registry_ref>/<agent_local_id>` asset identifiers in indexer storage.
+8. Use canonical `<chain_id_caip2>/<registry_ref>/<agent_local_id>` asset identifiers in implementation state and APIs.
 
-9. Resolve CID documents asynchronously with a bounded fetch policy.
+9. Resolve CID documents (when used as a source) with a bounded fetch policy.
 
 10. Allow post-registration enrollment of agents that do not yet have a locked `col`, via the first valid `setMetadata("col", ...)` call.
 
 11. Track Transfer events and verify agent ownership before accepting `col` writes.
 
-12. Resolve sub-collection parent relationships from CID documents asynchronously, validating same-creator namespace and depth constraints (section 4.1).
+12. Resolve sub-collection parent relationships from canonical parent CID candidates (CID document and/or on-chain source), validating same-creator namespace and depth constraints (section 4.1).
+
+---
+
+## Appendix A — Reference SQL Model (Non-Normative)
+
+The following SQL schema is an implementation example only. It is provided for operator convenience and does not define conformance requirements.
+
+```sql
+CREATE TABLE extension_collection_memberships (
+  chain_id_caip2          TEXT        NOT NULL,
+  asset                   TEXT        NOT NULL,
+  creator_snapshot_caip10 TEXT        NOT NULL,
+  cid_norm                TEXT        NOT NULL,
+  collection_key          TEXT        NOT NULL,
+  col_locked              BOOLEAN     NOT NULL DEFAULT TRUE,
+  lock_tx_hash            TEXT,
+  lock_block_number       BIGINT,
+  lock_block_hash         TEXT,
+  lock_block_timestamp    TIMESTAMPTZ,
+  lock_tx_index           INTEGER,
+  lock_log_index          INTEGER,
+  lock_slot               BIGINT,
+  parent_cid_norm         TEXT,
+  parent_collection_key   TEXT,
+  depth                   INTEGER,
+  lock_created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  active                  BOOLEAN     NOT NULL DEFAULT TRUE,
+  first_seen_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (chain_id_caip2, asset)
+);
+```
+
+```sql
+CREATE TABLE extension_agent_ownership (
+  chain_id_caip2          TEXT        NOT NULL,
+  asset                   TEXT        NOT NULL,
+  creator_snapshot_caip10 TEXT        NOT NULL,
+  current_owner           TEXT        NOT NULL,
+  previous_owner          TEXT,
+  block_number            BIGINT,
+  block_hash              TEXT,
+  slot                    BIGINT,
+  tx_hash                 TEXT,
+  tx_index                INTEGER,
+  log_index               INTEGER,
+  updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (chain_id_caip2, asset)
+);
+```
+
+```sql
+CREATE TABLE extension_collection_membership_history (
+  id                      BIGSERIAL   PRIMARY KEY,
+  chain_id_caip2          TEXT        NOT NULL,
+  asset                   TEXT        NOT NULL,
+  creator_snapshot_caip10 TEXT,
+  cid_norm                TEXT,
+  collection_key          TEXT,
+  event_type              TEXT        NOT NULL,
+    -- SET_LOCKED | SET_NOOP | SET_REJECTED_LOCKED
+    -- SET_REJECTED_NOT_CREATOR | SET_UNVERIFIABLE
+    -- DELETE_REJECTED_LOCKED | INVALID | DEACTIVATE
+    -- RE_REGISTERED
+  tx_hash                 TEXT,
+  block_number            BIGINT,
+  block_hash              TEXT,
+  block_timestamp         TIMESTAMPTZ,
+  tx_index                INTEGER,
+  log_index               INTEGER,
+  slot                    BIGINT,
+  invalid_reason          TEXT,
+  removed                 BOOLEAN     NOT NULL DEFAULT FALSE,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+```sql
+CREATE INDEX idx_ext_collection_key
+  ON extension_collection_memberships(collection_key)
+  WHERE active = TRUE;
+
+CREATE INDEX idx_ext_collection_creator_cid
+  ON extension_collection_memberships(creator_snapshot_caip10, cid_norm)
+  WHERE active = TRUE;
+
+CREATE INDEX idx_ext_collection_cid
+  ON extension_collection_memberships(cid_norm)
+  WHERE active = TRUE;
+
+CREATE INDEX idx_ext_collection_parent
+  ON extension_collection_memberships(parent_collection_key)
+  WHERE parent_collection_key IS NOT NULL;
+
+CREATE INDEX idx_ext_collection_key_all
+  ON extension_collection_memberships(collection_key);
+  -- Unfiltered: used for parent existence checks (regardless of active status)
+```

@@ -1,6 +1,6 @@
 # 8004 Collection Extension
 
-Compact, indexer-friendly collection extension for the [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) Agent Registry across Solana and EVM chains.
+Compact, behavior-defined collection extension for the [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) Agent Registry across Solana and EVM chains.
 
 ## Overview
 
@@ -12,13 +12,13 @@ Key properties:
 - **First-write-wins**: `col` is immutable after first valid set (prevents collection drift)
 - **Deterministic identity**: `collection_key = creator_snapshot_caip10|cid_norm`
 - **Cross-chain**: Solana and EVM with CAIP-2/CAIP-10/CAIP-19 standards
-- **Indexer-enforced**: immutability is an indexer policy, not an on-chain constraint
+- **Implementation-agnostic**: immutability is a required behavior; implementation strategy is not prescribed
 
 ## How It Works
 
 1. Creator publishes a collection JSON document to IPFS (name, image, socials)
 2. Agent owner calls `setMetadata("col", "c1:<cidv1_base32>")` on the 8004 registry
-3. Indexer ingests the event, normalizes the CID, derives `collection_key`, and locks membership
+3. A conforming implementation evaluates canonical event order, normalizes the CID, derives `collection_key`, and locks membership
 4. Once locked, the agent's collection membership is immutable in V1
 
 ## Files
